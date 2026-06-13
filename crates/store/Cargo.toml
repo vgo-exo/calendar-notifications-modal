@@ -1,0 +1,13 @@
+[package]
+name = "cnm-store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+cnm-core.workspace = true
+rusqlite.workspace = true
+chrono.workspace = true
+directories.workspace = true
+thiserror.workspace = true
+tracing.workspace = true

@@ -1,0 +1,22 @@
+/target
+**/*.rs.bk
+Cargo.lock.bak
+
+# JetBrains IDE project files (personal/local, not shared)
+/.idea/
+
+# Snap build artifacts
+/*.snap
+/parts/
+/stage/
+/prime/
+/.snapcraft/
+
+# Debian package artifacts
+/*.deb
+/debian/.debhelper/
+/debian/files
+/debian/calendar-notifications-modal/
+/debian/*.log
+/debian/*.substvars
+/debian/debhelper-build-stamp

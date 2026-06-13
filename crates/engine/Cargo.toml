@@ -1,0 +1,13 @@
+[package]
+name = "cnm-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+cnm-core.workspace = true
+cnm-store.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]

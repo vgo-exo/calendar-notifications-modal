@@ -1,0 +1,47 @@
+[package]
+name = "cnm-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "calendar-notifications-modal"
+path = "src/main.rs"
+
+[dependencies]
+cnm-core.workspace = true
+cnm-store.workspace = true
+cnm-engine.workspace = true
+cnm-backends.workspace = true
+cnm-ui.workspace = true
+chrono.workspace = true
+serde.workspace = true
+toml.workspace = true
+anyhow.workspace = true
+directories.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+gtk4 = { version = "0.9", package = "gtk4", features = ["v4_10"] }
+tokio.workspace = true
+
+[package.metadata.deb]
+name = "calendar-notifications-modal"
+maintainer = "Calendar Notifications Modal Team <maintainer@example.com>"
+copyright = "2024-2026, Calendar Notifications Modal Team"
+license-file = ["../../LICENSE", "0"]
+extended-description = """\
+An Outlook-style upcoming-event reminder modal for Linux (GNOME / Wayland).
+A small background daemon polls your calendars and, when events approach,
+pops a true modal window listing everything that's currently due."""
+section = "utils"
+priority = "optional"
+depends = "$auto, systemd, xdg-utils"
+assets = [
+    ["target/release/calendar-notifications-modal", "usr/bin/", "755"],
+    ["../../packaging/calendar-notifications-modal.service", "usr/lib/systemd/user/", "644"],
+    ["../../packaging/config.example.toml", "usr/share/calendar-notifications-modal/config-template.toml", "644"],
+    ["../../README.md", "usr/share/doc/calendar-notifications-modal/", "644"],
+    ["../../packaging/config.example.toml", "usr/share/doc/calendar-notifications-modal/examples/", "644"],
+]
+maintainer-scripts = "../../debian/"
+systemd-units = { enable = false }

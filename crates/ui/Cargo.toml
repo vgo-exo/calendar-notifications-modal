@@ -1,0 +1,11 @@
+[package]
+name = "cnm-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+cnm-core.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+gtk4 = { version = "0.9", package = "gtk4", features = ["v4_10"] }

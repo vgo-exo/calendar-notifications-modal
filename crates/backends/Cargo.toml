@@ -1,0 +1,28 @@
+[package]
+name = "cnm-backends"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = ["ics", "msgraph", "google"]
+ics = []
+msgraph = ["dep:serde", "dep:serde_json", "dep:directories", "dep:tokio"]
+google = ["dep:serde", "dep:serde_json", "dep:directories", "dep:tokio"]
+
+[dependencies]
+cnm-core.workspace = true
+chrono.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+url.workspace = true
+icalendar = { version = "0.16", features = ["chrono-tz"] }
+reqwest.workspace = true
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+directories = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+
+[dev-dependencies]
+serde_json.workspace = true

@@ -2,5 +2,11 @@
 //!
 //! This crate is intentionally free of I/O specifics so it can be unit-tested
 //! and shared by the store, engine, backends and UI crates.
-//!
-//! Scaffolding only for now; implementation lands in a follow-up commit.
+
+pub mod backend;
+pub mod meeting;
+pub mod model;
+
+pub use backend::{BackendError, CalendarBackend};
+pub use meeting::{MeetingLink, MeetingProvider};
+pub use model::{CalendarEvent, EventId, ReminderState, SnoozeOption};

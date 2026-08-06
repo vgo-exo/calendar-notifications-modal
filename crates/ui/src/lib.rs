@@ -45,6 +45,7 @@ pub enum UiAction {
 pub struct ReminderWindow {
     window: ApplicationWindow,
     list: ListBox,
+    warning_label: Label,
     callback: Rc<dyn Fn(UiAction)>,
     rows: RefCell<Vec<ReminderRow>>,
 }
@@ -73,6 +74,20 @@ impl ReminderWindow {
             .build();
         header.add_css_class("title-3");
         root.append(&header);
+
+        // Hidden by default; shown when the daemon reports a backend problem
+        // (e.g. an expired auth token) so failures aren't silently invisible
+        // in the UI, only in logs.
+        let warning_label = Label::builder()
+            .halign(Align::Start)
+            .wrap(true)
+            .margin_start(12)
+            .margin_end(12)
+            .margin_bottom(8)
+            .visible(false)
+            .build();
+        warning_label.add_css_class("warning");
+        root.append(&warning_label);
 
         let list = ListBox::new();
         list.set_selection_mode(SelectionMode::None);
@@ -104,6 +119,7 @@ impl ReminderWindow {
         let this = Rc::new(Self {
             window,
             list,
+            warning_label,
             callback,
             rows: RefCell::new(Vec::new()),
         });
@@ -137,6 +153,19 @@ impl ReminderWindow {
             self.list.append(&widget);
         }
         *self.rows.borrow_mut() = rows;
+    }
+
+    /// Show (or hide, if `None`) a persistent warning banner at the top of the
+    /// modal — used to surface backend problems (e.g. an expired auth token)
+    /// that would otherwise only appear in logs.
+    pub fn set_warning(&self, text: Option<&str>) {
+        match text {
+            Some(t) => {
+                self.warning_label.set_label(&format!("⚠ {t}"));
+                self.warning_label.set_visible(true);
+            }
+            None => self.warning_label.set_visible(false),
+        }
     }
 
     /// Present the modal (raising it if already visible).

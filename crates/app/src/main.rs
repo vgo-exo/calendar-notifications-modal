@@ -27,15 +27,29 @@ use config::Config;
 
 const APP_ID: &str = "com.github.calendar_notifications_modal";
 
+/// A backend currently failing, surfaced to the UI and via desktop notification.
+#[derive(Debug, Clone)]
+struct BackendIssue {
+    id: String,
+    message: String,
+}
+
 /// Shared snapshot of events fetched by the worker thread.
 type EventSnapshot = Arc<Mutex<Vec<CalendarEvent>>>;
+/// Shared snapshot of currently-failing backends (empty when all healthy).
+type IssueSnapshot = Arc<Mutex<Vec<BackendIssue>>>;
 
 /// Everything the GTK main thread needs to evaluate and render reminders.
 struct AppCtx {
     store: Store,
     engine_cfg: EngineConfig,
     events: EventSnapshot,
+    issues: IssueSnapshot,
     window: RefCell<Option<Rc<ReminderWindow>>>,
+    /// Whether the modal has already been auto-shown for the current run of
+    /// backend issues (avoids re-popping the window every refresh tick while
+    /// the user has closed it and no reminders are otherwise due).
+    issue_signalled: RefCell<bool>,
     _hold: RefCell<Option<gtk4::gio::ApplicationHoldGuard>>,
 }
 
@@ -96,7 +110,8 @@ fn main() {
 
     // Snapshot shared with the polling worker thread.
     let events: EventSnapshot = Arc::new(Mutex::new(Vec::new()));
-    spawn_poller(cfg.clone(), events.clone());
+    let issues: IssueSnapshot = Arc::new(Mutex::new(Vec::new()));
+    spawn_poller(cfg.clone(), events.clone(), issues.clone());
 
     let engine_cfg = EngineConfig {
         global_default_reminder: cfg.global_reminder(),
@@ -114,7 +129,9 @@ fn main() {
             store: Store::open_default().expect("reopen store"),
             engine_cfg: engine_cfg.clone(),
             events: events.clone(),
+            issues: issues.clone(),
             window: RefCell::new(None),
+            issue_signalled: RefCell::new(false),
             _hold: RefCell::new(Some(app.hold())),
         });
 
@@ -327,7 +344,7 @@ fn run_login(cfg: &Config, id: &str) -> anyhow::Result<()> {
 }
 
 /// Spawn the worker thread that polls backends and refreshes the snapshot.
-fn spawn_poller(cfg: Config, events: EventSnapshot) {
+fn spawn_poller(cfg: Config, events: EventSnapshot, issues: IssueSnapshot) {
     std::thread::Builder::new()
         .name("cnm-poller".into())
         .spawn(move || {
@@ -348,23 +365,55 @@ fn spawn_poller(cfg: Config, events: EventSnapshot) {
                     tracing::warn!("no usable backends configured; poller idle");
                 }
                 let interval = cfg.poll_interval();
+                // Tracks the last known error message per backend id, so we only
+                // send a desktop notification on a *transition* (new failure,
+                // changed error, or recovery) rather than every poll cycle.
+                let mut last_error: std::collections::HashMap<String, String> =
+                    std::collections::HashMap::new();
                 loop {
                     let now = Utc::now();
                     let window_start = now - Duration::hours(12);
                     let window_end = now + Duration::hours(24);
 
                     let mut all = Vec::new();
+                    let mut current_issues = Vec::new();
                     for backend in &backends {
+                        let id = backend.id();
                         match backend.fetch_events(window_start, window_end).await {
-                            Ok(mut evs) => all.append(&mut evs),
+                            Ok(mut evs) => {
+                                all.append(&mut evs);
+                                if let Some(prev) = last_error.remove(id) {
+                                    tracing::info!("backend '{id}' recovered (was: {prev})");
+                                    notify_backend(
+                                        &format!("Calendar '{id}' recovered"),
+                                        "It's fetching events normally again.",
+                                    );
+                                }
+                            }
                             Err(e) => {
-                                tracing::warn!("backend '{}' fetch failed: {e}", backend.id())
+                                let msg = e.to_string();
+                                tracing::warn!("backend '{id}' fetch failed: {msg}");
+                                let is_new = last_error.get(id) != Some(&msg);
+                                if is_new {
+                                    notify_backend(
+                                        &format!("Calendar '{id}' isn't updating"),
+                                        &msg,
+                                    );
+                                }
+                                last_error.insert(id.to_string(), msg.clone());
+                                current_issues.push(BackendIssue {
+                                    id: id.to_string(),
+                                    message: msg,
+                                });
                             }
                         }
                     }
                     tracing::debug!("polled {} event(s)", all.len());
                     if let Ok(mut guard) = events.lock() {
                         *guard = all;
+                    }
+                    if let Ok(mut guard) = issues.lock() {
+                        *guard = current_issues;
                     }
 
                     tokio::time::sleep(interval).await;
@@ -374,18 +423,34 @@ fn spawn_poller(cfg: Config, events: EventSnapshot) {
         .expect("spawn poller thread");
 }
 
+/// Send a desktop notification (best-effort; failures are only logged, since
+/// a missing notification daemon shouldn't crash the poller).
+fn notify_backend(summary: &str, body: &str) {
+    if let Err(e) = notify_rust::Notification::new()
+        .summary(summary)
+        .body(body)
+        .appname("Calendar Notifications Modal")
+        .icon("appointment-soon")
+        .show()
+    {
+        tracing::warn!("failed to send desktop notification: {e}");
+    }
+}
+
 /// Re-evaluate the due set and reconcile the window.
 fn recompute(ctx: &Rc<AppCtx>) {
     let now = Utc::now();
     let events = ctx.events.lock().map(|g| g.clone()).unwrap_or_default();
+    let issues = ctx.issues.lock().map(|g| g.clone()).unwrap_or_default();
 
     let due = compute_due(&events, now, &ctx.engine_cfg, |id| {
         ctx.store.get(id).unwrap_or(ReminderState::Active)
     });
     tracing::debug!(
-        "recompute: {} event(s) in snapshot, {} due",
+        "recompute: {} event(s) in snapshot, {} due, {} backend issue(s)",
         events.len(),
-        due.len()
+        due.len(),
+        issues.len()
     );
 
     let window_ref = ctx.window.borrow();
@@ -393,9 +458,35 @@ fn recompute(ctx: &Rc<AppCtx>) {
         return;
     };
 
+    let warning_text = if issues.is_empty() {
+        *ctx.issue_signalled.borrow_mut() = false;
+        None
+    } else {
+        Some(
+            issues
+                .iter()
+                .map(|i| format!("{}: {}", i.id, i.message))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+    };
+    window.set_warning(warning_text.as_deref());
+
     if due.is_empty() {
-        if window.is_visible() {
-            window.hide();
+        if issues.is_empty() {
+            if window.is_visible() {
+                window.hide();
+            }
+            return;
+        }
+        // Nothing due, but a backend is failing: keep the list empty but make
+        // sure the warning is seen at least once rather than staying silent
+        // in the background forever.
+        window.update(Vec::new());
+        let mut signalled = ctx.issue_signalled.borrow_mut();
+        if !window.is_visible() && !*signalled {
+            window.show();
+            *signalled = true;
         }
         return;
     }

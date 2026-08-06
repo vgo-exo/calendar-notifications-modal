@@ -34,26 +34,26 @@ static PATTERNS: Lazy<Vec<(MeetingProvider, Regex)>> = Lazy::new(|| {
     vec![
         (
             MeetingProvider::Teams,
-            Regex::new(r#"https://teams\.microsoft\.com/l/meetup-join/[^\s<>"'\)]+"#).unwrap(),
+            Regex::new(r#"https://teams\.microsoft\.com/l/meetup-join/[^\s<>"')]+"#).unwrap(),
         ),
         (
             MeetingProvider::Teams,
-            Regex::new(r#"https://teams\.live\.com/meet/[^\s<>"'\)]+"#).unwrap(),
+            Regex::new(r#"https://teams\.live\.com/meet/[^\s<>"')]+"#).unwrap(),
         ),
         (
             MeetingProvider::GoogleMeet,
-            Regex::new(r#"https://meet\.google\.com/[a-z]{3}-[a-z]{4}-[a-z]{3}[^\s<>"'\)]*"#).unwrap(),
+            Regex::new(r#"https://meet\.google\.com/[a-z]{3}-[a-z]{4}-[a-z]{3}[^\s<>"')]*"#).unwrap(),
         ),
         (
             MeetingProvider::Zoom,
-            Regex::new(r#"https://[A-Za-z0-9.-]*zoom\.us/(?:j|my|w)/[^\s<>"'\)]+"#).unwrap(),
+            Regex::new(r#"https://[A-Za-z0-9.-]*zoom\.us/(?:j|my|w)/[^\s<>"')]+"#).unwrap(),
         ),
     ]
 });
 
 impl MeetingLink {
     /// Wrap an already-trusted join URL whose provider is known from structured
-    /// metadata (e.g. a Microsoft Graph `onlineMeeting.joinUrl`), without
+    /// metadata (e.g., a Microsoft Graph `onlineMeeting.joinUrl`), without
     /// re-running link detection.
     pub fn from_known(provider: MeetingProvider, url: impl Into<String>) -> MeetingLink {
         MeetingLink {

@@ -17,6 +17,11 @@ pub struct Config {
     pub global_reminder_minutes: i64,
     /// Snooze presets.
     pub snooze: SnoozeConfig,
+    /// Path to a custom sound file (wav/mp3/ogg/flac/...) to play when a
+    /// reminder pops up. If unset, falls back to the desktop's short
+    /// `canberra-gtk-play --id=message` alert sound.
+    #[serde(default)]
+    pub sound_file: Option<String>,
     /// Configured calendar backends.
     pub backends: Vec<BackendConfig>,
 }
@@ -69,6 +74,7 @@ impl Default for Config {
             refresh_interval_secs: 15,
             global_reminder_minutes: 15,
             snooze: SnoozeConfig::default(),
+            sound_file: None,
             backends: Vec::new(),
         }
     }
@@ -133,6 +139,10 @@ global_reminder_minutes = 15
 before_start = [0, 5, 10, 15, 30, 60]
 # "Remind me in X minutes" choices once the event has started (multiples of 5).
 after_now = [5, 10, 15, 30]
+
+# Custom sound to play when a reminder pops up (wav/mp3/ogg/flac/...).
+# If unset, falls back to the short desktop "message" alert sound.
+# sound_file = "/home/you/Music/notification.mp3"
 
 # Add one [[backends]] block per calendar.
 #

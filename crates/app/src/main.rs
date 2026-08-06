@@ -7,7 +7,7 @@
 mod config;
 
 use std::cell::RefCell;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::{Rc, Weak};
 use std::sync::{Arc, Mutex};
 use std::time::Duration as StdDuration;
@@ -43,6 +43,7 @@ type IssueSnapshot = Arc<Mutex<Vec<BackendIssue>>>;
 struct AppCtx {
     store: Store,
     engine_cfg: EngineConfig,
+    sound_file: Option<PathBuf>,
     events: EventSnapshot,
     issues: IssueSnapshot,
     window: RefCell<Option<Rc<ReminderWindow>>>,
@@ -120,6 +121,7 @@ fn main() {
     };
 
     let refresh = StdDuration::from_secs(cfg.refresh_interval_secs.max(5));
+    let sound_file = cfg.sound_file.clone().map(PathBuf::from);
 
     let app = Application::builder().application_id(APP_ID).build();
 
@@ -128,6 +130,7 @@ fn main() {
         let ctx = Rc::new(AppCtx {
             store: Store::open_default().expect("reopen store"),
             engine_cfg: engine_cfg.clone(),
+            sound_file: sound_file.clone(),
             events: events.clone(),
             issues: issues.clone(),
             window: RefCell::new(None),
@@ -497,7 +500,7 @@ fn recompute(ctx: &Rc<AppCtx>) {
         let _ = ctx.store.mark_shown(&d.event.id, now);
     }
     if !window.is_visible() {
-        play_sound();
+        play_sound(ctx.sound_file.as_deref());
         window.show();
     }
 }
@@ -598,8 +601,31 @@ fn open_url(url: &str) {
     }
 }
 
-/// Play the desktop's "message" alert sound (best-effort, non-blocking).
-fn play_sound() {
+/// Play the reminder alert sound (best-effort, non-blocking).
+///
+/// If `custom` is set, plays that file via `pw-play` (falls back to `paplay`,
+/// then `aplay`). Otherwise plays the desktop's short "message" alert sound
+/// via `canberra-gtk-play`.
+fn play_sound(custom: Option<&Path>) {
+    if let Some(path) = custom {
+        for player in ["pw-play", "paplay", "aplay"] {
+            match std::process::Command::new(player).arg(path).spawn() {
+                Ok(_) => {
+                    tracing::debug!("played custom sound {} via {player}", path.display());
+                    return;
+                }
+                Err(e) => {
+                    tracing::debug!("failed to launch {player} for custom sound: {e}");
+                }
+            }
+        }
+        tracing::error!(
+            "failed to play custom sound {}: no working audio player found (tried pw-play, paplay, aplay)",
+            path.display()
+        );
+        return;
+    }
+
     match std::process::Command::new("canberra-gtk-play")
         .arg("--id=message")
         .spawn()

@@ -1,0 +1,10 @@
+[Unit]
+Description=OWA calendar export via Playwright (headless) for calendar-notifications-modal
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Tools/calendar-notifications-modal/tools/owa-exporter/playwright
+Environment=OWA_PW_HEADLESS=1
+# NODE_BIN_PLACEHOLDER is substituted by install-phase2.sh with the resolved
+# `node` binary path (nvm-managed node isn't on PATH for systemd user units).
+ExecStart=NODE_BIN_PLACEHOLDER export.js

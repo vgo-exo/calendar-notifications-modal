@@ -1,0 +1,14 @@
+{
+  "name": "owa-ics-exporter",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Playwright-based OWA calendar exporter (Phase 2): reuses a persistent, interactively-authenticated browser session to capture Outlook-on-the-web calendar data at the network layer and write it to a local .ics for calendar-notifications-modal.",
+  "type": "commonjs",
+  "scripts": {
+    "login": "node login.js",
+    "export": "node export.js"
+  },
+  "dependencies": {
+    "playwright": "^1.47.0"
+  }
+}

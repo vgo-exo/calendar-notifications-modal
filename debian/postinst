@@ -1,0 +1,38 @@
+#!/bin/bash
+set -e
+
+# Post-installation script for calendar-notifications-modal
+
+case "$1" in
+    configure)
+        # Note: This script runs as root during package installation
+        # User-specific setup will happen on first run via wrapper script
+        
+        echo "Calendar Notifications Modal installed successfully!"
+        echo ""
+        echo "To start using the application:"
+        echo "  1. Enable the systemd user service:"
+        echo "     systemctl --user enable calendar-notifications-modal.service"
+        echo "     systemctl --user start calendar-notifications-modal.service"
+        echo ""
+        echo "  2. Configure your calendars by editing:"
+        echo "     ~/.config/calendar-notifications-modal/config.toml"
+        echo ""
+        echo "  3. For OAuth setup (Microsoft Graph or Google Calendar):"
+        echo "     calendar-notifications-modal --login <backend-id>"
+        echo ""
+        echo "The configuration file will be automatically created on first run."
+        ;;
+
+    abort-upgrade|abort-remove|abort-deconfigure)
+        ;;
+
+    *)
+        echo "postinst called with unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

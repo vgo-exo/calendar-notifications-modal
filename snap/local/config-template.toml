@@ -1,0 +1,61 @@
+# Calendar Notifications Modal — default configuration.
+# Auto-generated on first run.
+# Location: $HOME/.config/calendar-notifications-modal/config.toml
+
+# How often to poll calendars for new/updated events (seconds).
+poll_interval_secs = 60
+# How often the modal re-evaluates which events are currently due (seconds).
+refresh_interval_secs = 15
+# Reminder lead time used when an event has no reminder of its own (minutes).
+global_reminder_minutes = 15
+
+[snooze]
+# "Remind me X minutes before start" choices (multiples of 5).
+before_start = [5, 10, 15, 30, 60]
+# "Remind me in X minutes" choices once the event has started (multiples of 5).
+after_now = [5, 10, 15, 30]
+
+# ==============================================================================
+# CALENDAR BACKENDS
+# ==============================================================================
+# Configure your calendar sources below. You can add multiple backends.
+# Supported types: "ics", "msgraph", "google"
+#
+# Examples:
+#
+# ICS (HTTP/HTTPS URL):
+# [[backends]]
+# type = "ics"
+# id = "work"
+# url = "https://example.com/calendar.ics"
+#
+# ICS (Local file):
+# [[backends]]
+# type = "ics"
+# id = "personal"
+# file = "/home/you/.local/share/calendars/personal.ics"
+#
+# Microsoft 365 / Outlook (requires setup - see README):
+# [[backends]]
+# type = "msgraph"
+# id = "outlook"
+# client_id = "00000000-0000-0000-0000-000000000000"
+# tenant = "common"
+#
+# Google Calendar (requires setup - see README):
+# [[backends]]
+# type = "google"
+# id = "gcal"
+# client_id = "xxxxxxxx.apps.googleusercontent.com"
+# client_secret = "your-google-client-secret"
+# calendar_id = "primary"
+#
+# ==============================================================================
+# ADD YOUR BACKENDS HERE:
+# ==============================================================================
+
+# Example: ICS from URL (uncomment and edit to use)
+# [[backends]]
+# type = "ics"
+# id = "my-calendar"
+# url = "https://example.com/calendar.ics"

@@ -1,0 +1,35 @@
+Source: calendar-notifications-modal
+Section: utils
+Priority: optional
+Maintainer: Calendar Notifications Modal Team <maintainer@example.com>
+Build-Depends: debhelper (>= 11),
+               cargo,
+               rustc,
+               libgtk-4-dev,
+               pkg-config
+Standards-Version: 4.5.1
+Homepage: https://github.com/yourusername/calendar-notifications-modal
+Vcs-Git: https://github.com/yourusername/calendar-notifications-modal.git
+
+Package: calendar-notifications-modal
+Architecture: any
+Depends: ${shlibs:Depends},
+         ${misc:Depends},
+         libgtk-4-1,
+         libglib2.0-0,
+         systemd,
+         xdg-utils
+Description: Outlook-style upcoming-event reminder modal for Linux
+ An Outlook-style upcoming-event reminder modal for Linux (GNOME / Wayland).
+ .
+ A small background daemon polls your calendars and, when events approach,
+ pops a true modal window listing everything that's currently due. Each
+ event can be dismissed, snoozed (with a context-aware dropdown), or joined
+ when an online meeting link is detected.
+ .
+ Features:
+  - Scrollable list of due events in a modal window
+  - Per-event Dismiss and Snooze with context-aware dropdown
+  - Per-event Join for Microsoft Teams, Google Meet, and Zoom links
+  - Dismiss all footer button
+  - Pluggable calendar backends: ICS, Microsoft Graph, Google Calendar

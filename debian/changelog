@@ -1,0 +1,10 @@
+calendar-notifications-modal (0.1.0-1) unstable; urgency=medium
+
+  * Initial release
+  * Outlook-style event reminder modal
+  * Support for ICS, Microsoft Graph, and Google Calendar backends
+  * GTK4-based modal window with dismiss and snooze functionality
+  * Systemd user service for automatic startup
+  * Auto-generated configuration file
+
+ -- Calendar Notifications Modal Team <maintainer@example.com>  Sat, 13 Jun 2026 16:17:00 +0200

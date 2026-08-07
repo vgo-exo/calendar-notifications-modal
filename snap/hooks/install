@@ -1,0 +1,19 @@
+#!/bin/bash
+# Install hook - runs when the snap is first installed
+
+set -e
+
+echo "Installing Calendar Notifications Modal..."
+echo "The daemon will automatically generate a configuration file on first run."
+echo "Configuration location: $HOME/.config/calendar-notifications-modal/config.toml"
+echo ""
+echo "The service will start automatically with your graphical session."
+echo ""
+echo "To configure your calendars:"
+echo "  1. Edit: $HOME/.config/calendar-notifications-modal/config.toml"
+echo "  2. Restart: systemctl --user restart snap.calendar-notifications-modal.daemon.service"
+echo ""
+echo "For OAuth setup (Microsoft Graph or Google Calendar), use:"
+echo "  calendar-notifications-modal.calendar-notifications-modal --login <backend-id>"
+echo ""
+echo "Installation complete!"

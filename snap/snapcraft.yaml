@@ -1,0 +1,98 @@
+name: calendar-notifications-modal
+base: core22
+version: '0.1.0'
+summary: Outlook-style upcoming-event reminder modal for Linux
+description: |
+  An Outlook-style upcoming-event reminder modal for Linux (GNOME / Wayland).
+  
+  A small background daemon polls your calendars and, when events approach, pops a
+  true modal window listing everything that's currently due. Each event can be
+  dismissed, snoozed (with a context-aware dropdown), or joined when an online
+  meeting link is detected.
+  
+  Features:
+  - Scrollable list of due events in a modal window
+  - Per-event Dismiss and Snooze with context-aware dropdown
+  - Per-event Join for Microsoft Teams, Google Meet, and Zoom links
+  - Dismiss all footer button
+  - Pluggable calendar backends: ICS, Microsoft Graph, Google Calendar
+  
+  After installation, the app will automatically:
+  - Generate a default configuration file at ~/.config/calendar-notifications-modal/config.toml
+  - Start on boot with your graphical session
+  
+  To configure your calendars, edit the config file and restart the service with:
+    systemctl --user restart snap.calendar-notifications-modal.daemon.service
+
+grade: stable
+confinement: strict
+
+architectures:
+  - build-on: amd64
+  - build-on: arm64
+  - build-on: armhf
+
+apps:
+  daemon:
+    command: bin/start-daemon.sh
+    extensions: [gnome]
+    daemon: simple
+    restart-condition: on-failure
+    restart-delay: 5s
+    daemon-scope: user
+    after: [graphical-session-target]
+    environment:
+      RUST_LOG: info
+    plugs:
+      - desktop
+      - desktop-legacy
+      - wayland
+      - x11
+      - network
+      - network-bind
+      - home
+      - gsettings
+
+  calendar-notifications-modal:
+    command: bin/calendar-notifications-modal-wrapper.sh
+    extensions: [gnome]
+    environment:
+      RUST_LOG: info
+    plugs:
+      - desktop
+      - desktop-legacy
+      - wayland
+      - x11
+      - network
+      - network-bind
+      - home
+      - gsettings
+
+parts:
+  calendar-notifications-modal:
+    plugin: rust
+    source: .
+    build-packages:
+      - libgtk-4-dev
+      - build-essential
+      - pkg-config
+    stage-packages:
+      - libgtk-4-1
+      - libglib2.0-0
+    override-build: |
+      rustup default stable
+      cargo build --release --bin calendar-notifications-modal
+      install -D -m 0755 target/release/calendar-notifications-modal $SNAPCRAFT_PART_INSTALL/bin/calendar-notifications-modal
+
+  scripts:
+    plugin: dump
+    source: snap/local
+    organize:
+      '*.sh': bin/
+      config-template.toml: etc/config-template.toml
+
+hooks:
+  install:
+    plugs: [home]
+  configure:
+    plugs: [home]

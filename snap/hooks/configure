@@ -1,0 +1,8 @@
+#!/bin/bash
+# Configure hook - runs when snap configuration changes
+
+set -e
+
+# This hook can be extended to handle snap-specific configuration
+# For now, it's a placeholder for future configuration options
+exit 0

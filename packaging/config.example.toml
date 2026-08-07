@@ -1,0 +1,66 @@
+# Calendar Notifications Modal — example configuration.
+# Copy to: $XDG_CONFIG_HOME/calendar-notifications-modal/config.toml
+# (usually ~/.config/calendar-notifications-modal/config.toml)
+
+# How often to poll calendars for new/updated events (seconds).
+poll_interval_secs = 60
+# How often the modal re-evaluates which events are currently due (seconds).
+refresh_interval_secs = 15
+# Reminder lead time used when an event has no reminder of its own (minutes).
+global_reminder_minutes = 15
+
+[snooze]
+# "Remind me X minutes before start" choices (multiples of 5).
+before_start = [0, 5, 10, 15, 30, 60]
+# "Remind me in X minutes" choices once the event has started (multiples of 5).
+after_now = [5, 10, 15, 30]
+
+# One [[backends]] block per calendar. Implemented types: `ics` (local file or
+# HTTP(S) URL), `msgraph` (Microsoft 365 / Outlook via Microsoft Graph), and
+# `google` (Google Calendar). CalDAV is planned.
+
+[[backends]]
+type = "ics"
+id = "work"
+url = "https://example.com/calendar.ics"
+
+[[backends]]
+type = "ics"
+id = "personal"
+file = "/home/you/.local/share/calendars/personal.ics"
+
+# Microsoft 365 / Outlook calendar via Microsoft Graph.
+#
+# Setup (once):
+#   1. Register a public-client app in Azure (Entra ID) > App registrations.
+#      - "Allow public client flows" = Yes.
+#      - Add the delegated Microsoft Graph permission `Calendars.Read`.
+#   2. Put the Application (client) ID below.
+#   3. Sign in once:  calendar-notifications-modal --login outlook
+#      This prints a URL + code; complete it in your browser. Tokens are cached
+#      at $XDG_DATA_HOME/calendar-notifications-modal/msgraph-<id>.json (0600).
+#
+# `tenant` defaults to "common" (personal + work/school). Use "organizations",
+# "consumers", or a specific tenant id to restrict it.
+[[backends]]
+type = "msgraph"
+id = "outlook"
+client_id = "00000000-0000-0000-0000-000000000000"
+tenant = "common"
+
+# Google Calendar (personal account; no admin needed).
+#
+# Setup (once):
+#   1. Google Cloud Console: create a project, enable the Google Calendar API.
+#   2. OAuth consent screen: External; add yourself under "Test users".
+#   3. Credentials > OAuth client ID > "TVs and Limited Input devices".
+#   4. Put the client id + secret below, then run:
+#        calendar-notifications-modal --login gcal
+#   calendar_id defaults to "primary". In Testing mode Google refresh tokens
+#   expire after 7 days, so re-run --login weekly until you publish the app.
+[[backends]]
+type = "google"
+id = "gcal"
+client_id = "xxxxxxxx.apps.googleusercontent.com"
+client_secret = "your-google-client-secret"
+calendar_id = "primary"

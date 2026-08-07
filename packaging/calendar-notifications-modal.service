@@ -1,0 +1,17 @@
+[Unit]
+Description=Calendar Notifications Modal (Outlook-style upcoming-event reminders)
+Documentation=https://example.com/calendar-notifications-modal
+# Start once the graphical session (and its Wayland/X11 + D-Bus env) is available.
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/calendar-notifications-modal
+Restart=on-failure
+RestartSec=5
+# Adjust verbosity with: RUST_LOG=debug
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=graphical-session.target

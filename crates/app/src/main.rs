@@ -263,6 +263,44 @@ fn print_usage() {
 
 /// Run the device-code sign-in flow for the backend with id `id`, dispatching on
 /// its configured kind (`msgraph` or `google`).
+/// Restart the systemd user service if it's running.
+fn restart_service_if_running() {
+    let status = std::process::Command::new("systemctl")
+        .args(["--user", "is-active", "calendar-notifications-modal"])
+        .output();
+
+    match status {
+        Ok(output) if output.status.success() => {
+            // Service is active, restart it
+            println!("\nRestarting calendar-notifications-modal service to pick up new tokens...");
+            let restart_result = std::process::Command::new("systemctl")
+                .args(["--user", "restart", "calendar-notifications-modal"])
+                .output();
+
+            match restart_result {
+                Ok(output) if output.status.success() => {
+                    println!("Service restarted successfully.");
+                }
+                Ok(output) => {
+                    eprintln!(
+                        "Warning: Failed to restart service: {}",
+                        String::from_utf8_lossy(&output.stderr)
+                    );
+                }
+                Err(e) => {
+                    eprintln!("Warning: Failed to restart service: {e}");
+                }
+            }
+        }
+        Ok(_) => {
+            // Service is not active, no need to restart
+        }
+        Err(e) => {
+            eprintln!("Warning: Could not check service status: {e}");
+        }
+    }
+}
+
 fn run_login(cfg: &Config, id: &str) -> anyhow::Result<()> {
     let backend_cfg = cfg
         .backends
@@ -274,7 +312,7 @@ fn run_login(cfg: &Config, id: &str) -> anyhow::Result<()> {
         .enable_all()
         .build()?;
 
-    match backend_cfg.kind.as_str() {
+    let result = match backend_cfg.kind.as_str() {
         "msgraph" => {
             let client_id = backend_cfg
                 .client_id
@@ -343,7 +381,14 @@ fn run_login(cfg: &Config, id: &str) -> anyhow::Result<()> {
         other => Err(anyhow::anyhow!(
             "backend '{id}' has type '{other}', which does not support --login"
         )),
+    };
+
+    // If login was successful, restart the service if it's running
+    if result.is_ok() {
+        restart_service_if_running();
     }
+
+    result
 }
 
 /// Spawn the worker thread that polls backends and refreshes the snapshot.

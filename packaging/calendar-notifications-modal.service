@@ -7,6 +7,11 @@ PartOf=graphical-session.target
 
 [Service]
 Type=simple
+# User units can't depend on the system network-online.target, so wait for
+# NetworkManager connectivity here instead (avoids a spurious gcal token-fetch
+# warning at login). '-' prefix: a timeout must not block startup, the app
+# already retries backend fetches on its own.
+ExecStartPre=-/usr/bin/nm-online -q --timeout=30
 ExecStart=%h/.local/bin/calendar-notifications-modal
 Restart=on-failure
 RestartSec=5

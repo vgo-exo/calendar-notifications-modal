@@ -22,6 +22,14 @@ pub struct Config {
     /// `canberra-gtk-play --id=message` alert sound.
     #[serde(default)]
     pub sound_file: Option<String>,
+    /// Default browser command to use for opening meeting links. If unset,
+    /// falls back to `xdg-open`. Can include arguments, e.g.,
+    /// `"firefox -P work"` or `"google-chrome --new-window"`.
+    #[serde(default)]
+    pub default_browser: Option<String>,
+    /// Per-provider browser overrides.
+    #[serde(default)]
+    pub meeting_browsers: MeetingBrowsersConfig,
     /// Configured calendar backends.
     pub backends: Vec<BackendConfig>,
 }
@@ -33,6 +41,17 @@ pub struct SnoozeConfig {
     pub before_start: Vec<i64>,
     /// "Minutes from now" presets (multiples of 5).
     pub after_now: Vec<i64>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MeetingBrowsersConfig {
+    /// Browser command for Microsoft Teams links.
+    pub teams: Option<String>,
+    /// Browser command for Google Meet links.
+    pub googlemeet: Option<String>,
+    /// Browser command for Zoom links.
+    pub zoom: Option<String>,
 }
 
 /// A single backend definition. Currently `type = "ics"` and `type = "msgraph"`
@@ -75,6 +94,8 @@ impl Default for Config {
             global_reminder_minutes: 15,
             snooze: SnoozeConfig::default(),
             sound_file: None,
+            default_browser: None,
+            meeting_browsers: MeetingBrowsersConfig::default(),
             backends: Vec::new(),
         }
     }
@@ -144,6 +165,19 @@ after_now = [5, 10, 15, 30]
 # If unset, falls back to the short desktop "message" alert sound.
 # sound_file = "/home/you/Music/notification.mp3"
 
+# Browser configuration for opening meeting links.
+# If unset, falls back to xdg-open (system default browser).
+# Can specify a default browser for all meetings:
+# default_browser = "firefox"
+# default_browser = "google-chrome --new-window"
+# default_browser = "microsoft-edge"
+
+# Or configure per-provider browsers:
+# [meeting_browsers]
+# teams = "microsoft-edge --app=https://teams.microsoft.com"
+# googlemeet = "google-chrome --new-window"
+# zoom = "firefox -P work"
+
 # Add one [[backends]] block per calendar.
 #
 # ICS (local file or HTTP(S) URL):
@@ -184,3 +218,63 @@ after_now = [5, 10, 15, 30]
 # client_secret = "your-google-client-secret"
 # calendar_id = "primary"
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_browser_config_parsing() {
+        let toml_text = r#"
+poll_interval_secs = 60
+refresh_interval_secs = 15
+global_reminder_minutes = 15
+default_browser = "firefox"
+
+[snooze]
+before_start = [0, 5, 10, 15, 30, 60]
+after_now = [5, 10, 15, 30]
+
+[meeting_browsers]
+teams = "microsoft-edge --app=https://teams.microsoft.com"
+googlemeet = "google-chrome --new-window"
+zoom = "firefox -P work"
+
+[[backends]]
+type = "ics"
+id = "test"
+file = "/tmp/test.ics"
+"#;
+
+        let cfg: Config = toml::from_str(toml_text).expect("Failed to parse config");
+        
+        assert_eq!(cfg.default_browser.as_deref(), Some("firefox"));
+        assert_eq!(cfg.meeting_browsers.teams.as_deref(), 
+                   Some("microsoft-edge --app=https://teams.microsoft.com"));
+        assert_eq!(cfg.meeting_browsers.googlemeet.as_deref(), 
+                   Some("google-chrome --new-window"));
+        assert_eq!(cfg.meeting_browsers.zoom.as_deref(), 
+                   Some("firefox -P work"));
+    }
+
+    #[test]
+    fn test_browser_config_defaults() {
+        let toml_text = r#"
+poll_interval_secs = 60
+refresh_interval_secs = 15
+global_reminder_minutes = 15
+
+[[backends]]
+type = "ics"
+id = "test"
+file = "/tmp/test.ics"
+"#;
+
+        let cfg: Config = toml::from_str(toml_text).expect("Failed to parse config");
+        
+        assert_eq!(cfg.default_browser, None);
+        assert_eq!(cfg.meeting_browsers.teams, None);
+        assert_eq!(cfg.meeting_browsers.googlemeet, None);
+        assert_eq!(cfg.meeting_browsers.zoom, None);
+    }
+}

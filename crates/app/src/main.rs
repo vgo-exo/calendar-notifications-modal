@@ -15,6 +15,7 @@ use std::time::Duration as StdDuration;
 use chrono::{DateTime, Duration, Local, Utc};
 use cnm_backends::{GoogleBackend, IcsBackend, MsGraphBackend};
 use cnm_core::backend::CalendarBackend;
+use cnm_core::meeting::MeetingProvider;
 use cnm_core::model::{CalendarEvent, ReminderState};
 use cnm_engine::{compute_due, resolve_snooze, DueEvent, EngineConfig};
 use cnm_store::Store;
@@ -43,6 +44,7 @@ type IssueSnapshot = Arc<Mutex<Vec<BackendIssue>>>;
 struct AppCtx {
     store: Store,
     engine_cfg: EngineConfig,
+    cfg: Config,
     sound_file: Option<PathBuf>,
     events: EventSnapshot,
     issues: IssueSnapshot,
@@ -122,6 +124,7 @@ fn main() {
 
     let refresh = StdDuration::from_secs(cfg.refresh_interval_secs.max(5));
     let sound_file = cfg.sound_file.clone().map(PathBuf::from);
+    let cfg_for_app = cfg.clone();
 
     let app = Application::builder().application_id(APP_ID).build();
 
@@ -130,6 +133,7 @@ fn main() {
         let ctx = Rc::new(AppCtx {
             store: Store::open_default().expect("reopen store"),
             engine_cfg: engine_cfg.clone(),
+            cfg: cfg_for_app.clone(),
             sound_file: sound_file.clone(),
             events: events.clone(),
             issues: issues.clone(),
@@ -617,13 +621,12 @@ fn handle_action(ctx: &Rc<AppCtx>, action: UiAction) {
         }
         UiAction::Join(id) => {
             let events = ctx.events.lock().map(|g| g.clone()).unwrap_or_default();
-            if let Some(url) = events
+            if let Some(meeting) = events
                 .iter()
                 .find(|e| e.id == id)
                 .and_then(|e| e.meeting.as_ref())
-                .map(|m| m.url.clone())
             {
-                open_url(&url);
+                open_url(&meeting.url, Some(meeting.provider), &ctx.cfg);
             }
         }
     }
@@ -638,11 +641,44 @@ fn handle_action(ctx: &Rc<AppCtx>, action: UiAction) {
     });
 }
 
-/// Open a meeting URL with the desktop's default handler.
-fn open_url(url: &str) {
-    match std::process::Command::new("xdg-open").arg(url).spawn() {
-        Ok(_) => tracing::info!("opened meeting link"),
-        Err(e) => tracing::error!("failed to launch xdg-open: {e}"),
+/// Open a meeting URL with the configured browser or system default.
+fn open_url(url: &str, provider: Option<MeetingProvider>, cfg: &Config) {
+    let browser_cmd = provider
+        .and_then(|p| match p {
+            MeetingProvider::Teams => cfg.meeting_browsers.teams.as_ref(),
+            MeetingProvider::GoogleMeet => cfg.meeting_browsers.googlemeet.as_ref(),
+            MeetingProvider::Zoom => cfg.meeting_browsers.zoom.as_ref(),
+        })
+        .or(cfg.default_browser.as_ref());
+
+    if let Some(cmd) = browser_cmd {
+        // Parse command with potential arguments
+        let parts: Vec<&str> = cmd.split_whitespace().collect();
+        if parts.is_empty() {
+            tracing::error!("empty browser command");
+            return;
+        }
+
+        let mut command = std::process::Command::new(parts[0]);
+        for arg in &parts[1..] {
+            command.arg(arg);
+        }
+        command.arg(url);
+
+        match command.spawn() {
+            Ok(_) => tracing::info!("opened meeting link with {}", parts[0]),
+            Err(e) => {
+                tracing::error!("failed to launch {}: {e}; falling back to xdg-open", parts[0]);
+                // Fallback to xdg-open
+                let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+            }
+        }
+    } else {
+        // Default to xdg-open
+        match std::process::Command::new("xdg-open").arg(url).spawn() {
+            Ok(_) => tracing::info!("opened meeting link with xdg-open"),
+            Err(e) => tracing::error!("failed to launch xdg-open: {e}"),
+        }
     }
 }
 

@@ -114,12 +114,13 @@ function pickJoinUrl(o) {
   const cands = [
     o.onlineMeetingUrl, o.OnlineMeetingUrl,
     o.JoinOnlineMeetingUrl, o.joinOnlineMeetingUrl,
-    o.SkypeTeamsMeetingUrl,
+    o.OnlineMeetingJoinUrl, o.onlineMeetingJoinUrl,
+    o.SkypeTeamsMeetingUrl, o.skypeTeamsMeetingUrl,
   ];
   for (const c of cands) if (c && typeof c === 'string') return c;
   const body = (o.body && (o.body.content || o.body.Content)) || o.Body && (o.Body.Value || o.Body) || o.bodyPreview || o.BodyPreview || '';
   const m = String(body).match(
-    /https:\/\/teams\.microsoft\.com\/l\/meetup-join\/[^\s"'<>)]+|https:\/\/[A-Za-z0-9.-]*zoom\.us\/(?:j|my|w)\/[^\s"'<>)]+|https:\/\/meet\.google\.com\/[a-z-]+/i
+    /https:\/\/teams\.microsoft\.com\/l\/meetup-join\/[^\s"'<>)]+|https:\/\/teams\.microsoft\.com\/meet\/[^\s"'<>)]+|https:\/\/teams\.live\.com\/meet\/[^\s"'<>)]+|https:\/\/[A-Za-z0-9.-]*zoom\.us\/(?:j|my|w)\/[^\s"'<>)]+|https:\/\/meet\.google\.com\/[a-z-]+/i
   );
   return m ? m[0] : '';
 }

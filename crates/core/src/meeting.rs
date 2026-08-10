@@ -37,6 +37,11 @@ static PATTERNS: Lazy<Vec<(MeetingProvider, Regex)>> = Lazy::new(|| {
             Regex::new(r#"https://teams\.microsoft\.com/l/meetup-join/[^\s<>"')]+"#).unwrap(),
         ),
         (
+            // New short Teams meeting link (e.g. teams.microsoft.com/meet/<id>?p=<passcode>).
+            MeetingProvider::Teams,
+            Regex::new(r#"https://teams\.microsoft\.com/meet/[^\s<>"')]+"#).unwrap(),
+        ),
+        (
             MeetingProvider::Teams,
             Regex::new(r#"https://teams\.live\.com/meet/[^\s<>"')]+"#).unwrap(),
         ),
@@ -100,6 +105,17 @@ mod tests {
         let link = MeetingLink::detect(body).unwrap();
         assert_eq!(link.provider, MeetingProvider::Teams);
         assert!(link.url.contains("meetup-join"));
+    }
+
+    #[test]
+    fn detects_teams_short_meet_link() {
+        let body = "Réunion Microsoft Teams https://teams.microsoft.com/meet/367723606230547?p=Bp4ntgHbBav8zRKoTh";
+        let link = MeetingLink::detect(body).unwrap();
+        assert_eq!(link.provider, MeetingProvider::Teams);
+        assert_eq!(
+            link.url,
+            "https://teams.microsoft.com/meet/367723606230547?p=Bp4ntgHbBav8zRKoTh"
+        );
     }
 
     #[test]

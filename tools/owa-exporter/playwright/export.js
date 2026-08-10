@@ -32,6 +32,14 @@ const HORIZON_DAYS = parseInt(process.env.OWA_PW_HORIZON_DAYS || '14', 10);
 const NAV_HOPS = parseInt(process.env.OWA_PW_NAV_HOPS || '2', 10); // best-effort "next week" clicks
 const HEADLESS = process.env.OWA_PW_HEADLESS !== '0';
 const NAV_TIMEOUT_MS = parseInt(process.env.OWA_PW_NAV_TIMEOUT_MS || '45000', 10);
+// When set, every event-shaped JSON response is written verbatim to this dir so
+// the raw OWA payload (and where/whether a join URL appears) can be inspected.
+const DEBUG_DUMP_DIR = process.env.OWA_PW_DEBUG_DUMP || '';
+// The calendar grid omits join URLs; OWA fetches them per event via a
+// `GetCalendarEvent` POST. Set to 0 to disable that follow-up enrichment.
+const ENRICH_JOIN_URLS = process.env.OWA_PW_ENRICH !== '0';
+// Cap enrichment requests per run to keep the export cheap.
+const ENRICH_MAX = parseInt(process.env.OWA_PW_ENRICH_MAX || '60', 10);
 
 // Selectors are best-effort guesses at OWA's "next" calendar navigation
 // control; OWA's DOM/aria-labels vary by build/locale, so failures here are
@@ -66,6 +74,86 @@ async function clickNext(page) {
   return false;
 }
 
+// A grid event whose location/title hints at an online meeting is worth a
+// follow-up GetCalendarEvent call to fetch its join URL.
+function likelyOnline(ev) {
+  const hay = ((ev.location || '') + ' ' + (ev.title || '')).toLowerCase();
+  return /teams|zoom|meet|r[ée]union|visio|online|webex|skype|hangout/.test(hay);
+}
+
+// Pull a join URL out of a GetCalendarEvent response: prefer the structured
+// OnlineMeetingJoinUrl field, else scan for a recognized provider link.
+function extractJoinUrl(node) {
+  let found = '';
+  (function walk(n, d) {
+    if (found || !n || d > 14) return;
+    if (Array.isArray(n)) { for (const x of n) walk(x, d + 1); return; }
+    if (typeof n !== 'object') return;
+    for (const k in n) {
+      const v = n[k];
+      if (typeof v === 'string' && v && /onlinemeetingjoinurl/i.test(k) && /^https?:/i.test(v)) {
+        found = v;
+        return;
+      }
+    }
+    for (const k in n) if (n[k] && typeof n[k] === 'object') walk(n[k], d + 1);
+  })(node, 0);
+  if (found) return found;
+  const m = JSON.stringify(node).match(
+    /https:\/\/teams\.microsoft\.com\/(?:l\/meetup-join|meet)\/[^\s"'<>)\\]+|https:\/\/teams\.live\.com\/meet\/[^\s"'<>)\\]+|https:\/\/[A-Za-z0-9.-]*zoom\.us\/(?:j|my|w)\/[^\s"'<>)\\]+|https:\/\/meet\.google\.com\/[a-z-]+/i
+  );
+  return m ? m[0] : '';
+}
+
+// Build a GetCalendarEvent body for one event id by cloning a captured template
+// request (which carries the exact ItemShape OWA expects) and swapping EventIds.
+function buildGetEventBody(templateBody, itemId) {
+  const obj = JSON.parse(templateBody);
+  if (obj && obj.Body) {
+    obj.Body.EventIds = [{ __type: 'ItemId:#Exchange', Id: itemId }];
+  }
+  return JSON.stringify(obj);
+}
+
+// Copy the template headers, dropping ones the request layer must set itself.
+function replayHeaders(headers) {
+  const out = {};
+  for (const k in headers) {
+    if (/^(cookie|content-length|host|connection|accept-encoding)$/i.test(k)) continue;
+    out[k] = headers[k];
+  }
+  return out;
+}
+
+// Replay GetCalendarEvent for each online-looking event missing a join URL and
+// fill it in. Uses the browser context's request API so cookies/session apply.
+async function enrichJoinUrls(context, events, template) {
+  let enriched = 0;
+  let attempts = 0;
+  for (const ev of events.values()) {
+    if (attempts >= ENRICH_MAX) break;
+    if (ev.joinUrl) continue;
+    if (!ev.uid || /^gen-/.test(ev.uid)) continue;
+    if (!likelyOnline(ev)) continue;
+    attempts++;
+    try {
+      const resp = await context.request.post(template.url, {
+        headers: replayHeaders(template.headers),
+        data: buildGetEventBody(template.body, ev.uid),
+      });
+      if (!resp.ok()) continue;
+      const url = extractJoinUrl(await resp.json());
+      if (url) {
+        ev.joinUrl = url;
+        enriched++;
+      }
+    } catch (_) {
+      // one failed enrichment shouldn't abort the rest
+    }
+  }
+  return { enriched, attempts };
+}
+
 async function main() {
   if (!fs.existsSync(PROFILE_DIR)) {
     console.error(
@@ -85,6 +173,23 @@ async function main() {
   let sawAnyJson = 0;
   const page = context.pages()[0] || (await context.newPage());
 
+  // Capture one real GetCalendarEvent request to replay for per-event join URLs.
+  let getEventTemplate = null;
+  page.on('request', (req) => {
+    try {
+      if (getEventTemplate) return;
+      const h = req.headers();
+      const action = h['action'] || h['x-owa-actionsource'] || '';
+      if (req.method() !== 'POST' || action !== 'GetCalendarEvent') return;
+      const pd = req.postData();
+      if (pd && /EventIds/.test(pd)) {
+        getEventTemplate = { url: req.url(), headers: h, body: pd };
+      }
+    } catch (_) {
+      // template capture is best-effort
+    }
+  });
+
   page.on('response', async (resp) => {
     try {
       const url = resp.url();
@@ -100,6 +205,24 @@ async function main() {
         return;
       }
       sawAnyJson++;
+      if (DEBUG_DUMP_DIR) {
+        try {
+          fs.mkdirSync(DEBUG_DUMP_DIR, { recursive: true });
+          const name = `resp-${String(sawAnyJson).padStart(3, '0')}.json`;
+          fs.writeFileSync(path.join(DEBUG_DUMP_DIR, name), text, 'utf8');
+          const req = resp.request();
+          const meta = {
+            url: req.url(),
+            method: req.method(),
+            action: (req.headers()['action'] || ''),
+            headers: req.headers(),
+            postData: (req.postData() || '').slice(0, 4000),
+          };
+          fs.writeFileSync(path.join(DEBUG_DUMP_DIR, `resp-${String(sawAnyJson).padStart(3, '0')}.req.json`), JSON.stringify(meta, null, 2), 'utf8');
+        } catch (_) {
+          // debug dump is best-effort
+        }
+      }
       const found = [];
       harvest(json, found, 0);
       for (const ev of found) {
@@ -133,6 +256,13 @@ async function main() {
       if (!clicked) break;
       await page.waitForLoadState('networkidle', { timeout: NAV_TIMEOUT_MS }).catch(() => {});
       await page.waitForTimeout(1500);
+    }
+
+    if (ENRICH_JOIN_URLS && getEventTemplate) {
+      const { enriched, attempts } = await enrichJoinUrls(context, events, getEventTemplate);
+      console.log(`OWA export: enriched ${enriched}/${attempts} online event(s) with join URLs.`);
+    } else if (ENRICH_JOIN_URLS) {
+      console.warn('OWA export: no GetCalendarEvent template captured; join URLs not enriched.');
     }
   } finally {
     await context.close();

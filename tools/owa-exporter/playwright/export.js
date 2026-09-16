@@ -28,6 +28,9 @@ const CALENDAR_URL =
 const TARGET_ICS =
   process.env.OWA_ICS_TARGET ||
   path.join(os.homedir(), '.local/share/calendar-notifications-modal/work.ics');
+// Sidecar the daemon can read to know *why* the .ics wasn't refreshed, since a
+// failed run otherwise leaves the .ics untouched with no error of its own.
+const STATUS_PATH = TARGET_ICS + '.status.json';
 const HORIZON_DAYS = parseInt(process.env.OWA_PW_HORIZON_DAYS || '14', 10);
 const NAV_HOPS = parseInt(process.env.OWA_PW_NAV_HOPS || '2', 10); // best-effort "next week" clicks
 const HEADLESS = process.env.OWA_PW_HEADLESS !== '0';
@@ -53,6 +56,22 @@ const NEXT_SELECTORS = [
   'button[title*="Next" i]',
   '[data-icon-name="ChevronRight"]',
 ];
+
+// Atomically record the outcome of this run for the Rust daemon to check.
+function writeStatus(ok, message) {
+  try {
+    fs.mkdirSync(path.dirname(STATUS_PATH), { recursive: true });
+    const tmp = STATUS_PATH + '.tmp-' + process.pid;
+    fs.writeFileSync(
+      tmp,
+      JSON.stringify({ ok, timestamp: new Date().toISOString(), message }),
+      'utf8'
+    );
+    fs.renameSync(tmp, STATUS_PATH);
+  } catch (e) {
+    console.error('failed to write status sidecar:', e);
+  }
+}
 
 function looksJsonish(contentType, url) {
   if (contentType && /json/i.test(contentType)) return true;
@@ -160,6 +179,7 @@ async function main() {
       'No browser profile found at ' + PROFILE_DIR + '.\n' +
       'Run `npm run login` first to sign in interactively.'
     );
+    writeStatus(false, 'not signed in — run: npm run login');
     process.exit(2);
   }
 
@@ -247,6 +267,7 @@ async function main() {
         'Redirected to login (' + finalUrl + ') — the saved session has expired.\n' +
         'Run `npm run login` again to re-authenticate.'
       );
+      writeStatus(false, 'session expired — run: npm run login');
       await context.close();
       process.exit(3);
     }
@@ -287,6 +308,7 @@ async function main() {
     `OWA export: saw ${sawAnyJson} JSON response(s), captured ${events.size} event(s), ` +
     `kept ${kept.length} within ${HORIZON_DAYS}d horizon -> ${TARGET_ICS}`
   );
+  writeStatus(true, `captured ${events.size} event(s)`);
   if (events.size === 0) {
     console.warn(
       'WARNING: 0 events captured. Set OWA_PW_HEADLESS=0 and re-run to watch the ' +
@@ -297,5 +319,6 @@ async function main() {
 
 main().catch((err) => {
   console.error('export.js failed:', err);
+  writeStatus(false, 'unexpected error: ' + err.message);
   process.exit(1);
 });

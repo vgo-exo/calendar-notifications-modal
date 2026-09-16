@@ -1,5 +1,8 @@
 [Unit]
 Description=OWA calendar export via Playwright (headless) for calendar-notifications-modal
+# Any failed run (exit 1/2/3) fires an instant desktop notification, since the
+# .ics file itself is left untouched on failure and gives no error of its own.
+OnFailure=calendar-notifications-owa-export-alert.service
 
 [Service]
 Type=oneshot

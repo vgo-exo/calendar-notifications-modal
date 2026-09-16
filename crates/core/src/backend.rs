@@ -18,6 +18,8 @@ pub enum BackendError {
     #[error("configuration error: {0}")]
     Config(String),
     #[error("{0}")]
+    Stale(String),
+    #[error("{0}")]
     Other(String),
 }
 

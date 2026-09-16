@@ -23,6 +23,11 @@ after_now = [5, 10, 15, 30]
 type = "ics"
 id = "work"
 url = "https://example.com/calendar.ics"
+# Optional: if this file is refreshed by a periodic exporter (e.g.
+# tools/owa-exporter), opt in to staleness detection so a silent export
+# failure (e.g. an expired login session) surfaces as a warning instead of
+# quietly serving old data. Recommended: ~3x the exporter's own interval.
+# stale_after_secs = 2700  # 45 min; owa-exporter's timer runs every 15 min
 
 [[backends]]
 type = "ics"

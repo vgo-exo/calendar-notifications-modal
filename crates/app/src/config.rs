@@ -70,6 +70,14 @@ pub struct BackendConfig {
     /// HTTP(S) `.ics` URL (for `type = "ics"`).
     #[serde(default)]
     pub url: Option<String>,
+    /// Opt-in staleness check (for `type = "ics"`): if the source hasn't
+    /// produced fresh data within this many seconds, the backend reports an
+    /// error instead of silently keeping old data. Unset or `0` disables the
+    /// check. Useful for `.ics` files a periodic exporter (e.g.
+    /// `tools/owa-exporter`) is supposed to refresh; not recommended for
+    /// files you only edit by hand.
+    #[serde(default)]
+    pub stale_after_secs: Option<u64>,
     /// Azure application (client) ID (for `type = "msgraph"`).
     #[serde(default)]
     pub client_id: Option<String>,

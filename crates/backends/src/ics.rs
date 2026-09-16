@@ -1,6 +1,6 @@
 //! iCalendar (`.ics`) backend: reads events from a local file or HTTP(S) URL.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::Duration as StdDuration;
 
@@ -22,10 +22,24 @@ pub enum IcsSource {
     Url(String),
 }
 
+/// Shape of the optional `<file>.status.json` sidecar an external exporter
+/// (e.g. `tools/owa-exporter`) can write next to its `.ics` file, so a silent
+/// export failure (e.g. an expired login session) can be surfaced instead of
+/// the backend just reading yesterday's file with no error.
+#[derive(Debug, serde::Deserialize)]
+struct ExportStatus {
+    ok: bool,
+    #[serde(default)]
+    timestamp: Option<DateTime<Utc>>,
+    #[serde(default)]
+    message: Option<String>,
+}
+
 /// A backend backed by a single iCalendar source.
 pub struct IcsBackend {
     id: String,
     source: IcsSource,
+    stale_after: Option<StdDuration>,
 }
 
 impl IcsBackend {
@@ -33,6 +47,7 @@ impl IcsBackend {
         Self {
             id: id.into(),
             source,
+            stale_after: None,
         }
     }
 
@@ -42,6 +57,16 @@ impl IcsBackend {
 
     pub fn from_url(id: impl Into<String>, url: impl Into<String>) -> Self {
         Self::new(id, IcsSource::Url(url.into()))
+    }
+
+    /// Opt in to staleness checking: if the source hasn't produced fresh data
+    /// within `stale_after`, `fetch_events` returns `BackendError::Stale`
+    /// instead of silently keeping the old content. `None` (the default)
+    /// disables the check, since some `.ics` files are legitimately edited
+    /// rarely on purpose.
+    pub fn with_stale_after(mut self, stale_after: Option<StdDuration>) -> Self {
+        self.stale_after = stale_after;
+        self
     }
 
     async fn load_text(&self) -> Result<String, BackendError> {
@@ -62,6 +87,74 @@ impl IcsBackend {
             }
         }
     }
+
+    /// Check whether the `.ics` file is fresh enough. A no-op unless
+    /// `stale_after` is set and the source is a local file. Prefers the
+    /// exporter-written `<file>.status.json` sidecar (authoritative reason
+    /// for the last attempt) and falls back to the file's mtime.
+    fn check_staleness(&self) -> Result<(), BackendError> {
+        let Some(stale_after) = self.stale_after else {
+            return Ok(());
+        };
+        let IcsSource::File(path) = &self.source else {
+            return Ok(());
+        };
+
+        if let Some(status) = read_export_status(path) {
+            if !status.ok {
+                return Err(BackendError::Stale(
+                    status
+                        .message
+                        .unwrap_or_else(|| "last export attempt failed".to_string()),
+                ));
+            }
+            if let Some(ts) = status.timestamp {
+                let age = Utc::now().signed_duration_since(ts);
+                let threshold = chrono::Duration::from_std(stale_after).unwrap_or_default();
+                if age > threshold {
+                    return Err(BackendError::Stale(format!(
+                        "last successful export was {} ago",
+                        humanize_secs(age.num_seconds().max(0))
+                    )));
+                }
+                return Ok(());
+            }
+        }
+
+        // No usable sidecar: fall back to the file's own mtime.
+        let modified = std::fs::metadata(path)
+            .and_then(|m| m.modified())
+            .map_err(|e| BackendError::Other(e.to_string()))?;
+        let age = modified.elapsed().unwrap_or_default();
+        if age > stale_after {
+            return Err(BackendError::Stale(format!(
+                "{} hasn't been updated in {}",
+                path.display(),
+                humanize_secs(age.as_secs() as i64)
+            )));
+        }
+        Ok(())
+    }
+}
+
+/// Read and parse `<path>.status.json`, if present and valid. Any I/O or
+/// parse error is treated as "no sidecar" so the mtime fallback takes over.
+fn read_export_status(path: &Path) -> Option<ExportStatus> {
+    let mut sidecar = path.as_os_str().to_owned();
+    sidecar.push(".status.json");
+    let text = std::fs::read_to_string(sidecar).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+/// Render a second count as a short human-readable age, e.g. "47 min" or "2h 5min".
+fn humanize_secs(total_secs: i64) -> String {
+    let total_secs = total_secs.max(0);
+    let mins = total_secs / 60;
+    if mins < 60 {
+        format!("{mins} min")
+    } else {
+        format!("{}h {}min", mins / 60, mins % 60)
+    }
 }
 
 #[async_trait]
@@ -75,6 +168,7 @@ impl CalendarBackend for IcsBackend {
         window_start: DateTime<Utc>,
         window_end: DateTime<Utc>,
     ) -> Result<Vec<CalendarEvent>, BackendError> {
+        self.check_staleness()?;
         let text = self.load_text().await?;
         parse_ics(&text, &self.id, window_start, window_end)
     }
@@ -355,5 +449,102 @@ END:VCALENDAR\r
         );
         assert_eq!(parse_ical_duration("garbage"), None);
         assert_eq!(parse_ical_duration("PT15"), None);
+    }
+
+    fn temp_ics_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("cnm-ics-test-{name}.ics"))
+    }
+
+    fn write_sidecar(ics_path: &Path, json: &str) {
+        std::fs::write(format!("{}.status.json", ics_path.display()), json).unwrap();
+    }
+
+    fn cleanup(ics_path: &Path) {
+        let _ = std::fs::remove_file(ics_path);
+        let _ = std::fs::remove_file(format!("{}.status.json", ics_path.display()));
+    }
+
+    #[test]
+    fn staleness_disabled_by_default() {
+        let path = temp_ics_path("disabled");
+        cleanup(&path);
+        std::fs::write(&path, SAMPLE).unwrap();
+        let backend = IcsBackend::from_file("acct", &path);
+        assert!(backend.check_staleness().is_ok());
+        cleanup(&path);
+    }
+
+    #[test]
+    fn fresh_mtime_without_sidecar_is_ok() {
+        let path = temp_ics_path("fresh-mtime");
+        cleanup(&path);
+        std::fs::write(&path, SAMPLE).unwrap();
+        let backend =
+            IcsBackend::from_file("acct", &path).with_stale_after(Some(StdDuration::from_secs(2700)));
+        assert!(backend.check_staleness().is_ok());
+        cleanup(&path);
+    }
+
+    #[test]
+    fn old_mtime_without_sidecar_is_stale() {
+        let path = temp_ics_path("old-mtime");
+        cleanup(&path);
+        std::fs::write(&path, SAMPLE).unwrap();
+        let old = std::time::SystemTime::now() - StdDuration::from_secs(3600);
+        std::fs::File::open(&path).unwrap().set_modified(old).unwrap();
+        let backend =
+            IcsBackend::from_file("acct", &path).with_stale_after(Some(StdDuration::from_secs(2700)));
+        assert!(matches!(backend.check_staleness(), Err(BackendError::Stale(_))));
+        cleanup(&path);
+    }
+
+    #[test]
+    fn sidecar_reports_failure() {
+        let path = temp_ics_path("sidecar-fail");
+        cleanup(&path);
+        std::fs::write(&path, SAMPLE).unwrap();
+        write_sidecar(
+            &path,
+            r#"{"ok":false,"timestamp":"2026-01-01T00:00:00Z","message":"session expired — run: npm run login"}"#,
+        );
+        let backend =
+            IcsBackend::from_file("acct", &path).with_stale_after(Some(StdDuration::from_secs(2700)));
+        match backend.check_staleness() {
+            Err(BackendError::Stale(msg)) => assert_eq!(msg, "session expired — run: npm run login"),
+            other => panic!("expected Stale error, got {other:?}"),
+        }
+        cleanup(&path);
+    }
+
+    #[test]
+    fn sidecar_recent_success_is_ok() {
+        let path = temp_ics_path("sidecar-recent");
+        cleanup(&path);
+        std::fs::write(&path, SAMPLE).unwrap();
+        let ts = Utc::now().to_rfc3339();
+        write_sidecar(
+            &path,
+            &format!(r#"{{"ok":true,"timestamp":"{ts}","message":"captured 3 event(s)"}}"#),
+        );
+        let backend =
+            IcsBackend::from_file("acct", &path).with_stale_after(Some(StdDuration::from_secs(2700)));
+        assert!(backend.check_staleness().is_ok());
+        cleanup(&path);
+    }
+
+    #[test]
+    fn sidecar_old_success_is_stale() {
+        let path = temp_ics_path("sidecar-old");
+        cleanup(&path);
+        std::fs::write(&path, SAMPLE).unwrap();
+        let ts = (Utc::now() - Duration::hours(2)).to_rfc3339();
+        write_sidecar(
+            &path,
+            &format!(r#"{{"ok":true,"timestamp":"{ts}","message":"captured 3 event(s)"}}"#),
+        );
+        let backend =
+            IcsBackend::from_file("acct", &path).with_stale_after(Some(StdDuration::from_secs(2700)));
+        assert!(matches!(backend.check_staleness(), Err(BackendError::Stale(_))));
+        cleanup(&path);
     }
 }

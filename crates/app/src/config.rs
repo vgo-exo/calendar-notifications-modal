@@ -78,6 +78,13 @@ pub struct BackendConfig {
     /// files you only edit by hand.
     #[serde(default)]
     pub stale_after_secs: Option<u64>,
+    /// Opt-in grace period (for `type = "ics"` with `stale_after_secs` set):
+    /// suppress staleness warnings for this many seconds after the daemon starts,
+    /// allowing the exporter (e.g. systemd timer with `OnBootSec=2min`) time to
+    /// run before checks activate. When the grace period expires, an immediate
+    /// export run is triggered. Unset or `0` disables the grace period.
+    #[serde(default)]
+    pub staleness_grace_period_secs: Option<u64>,
     /// Azure application (client) ID (for `type = "msgraph"`).
     #[serde(default)]
     pub client_id: Option<String>,

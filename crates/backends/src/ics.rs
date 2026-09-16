@@ -2,6 +2,7 @@
 
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration as StdDuration;
 
 use async_trait::async_trait;
@@ -40,6 +41,11 @@ pub struct IcsBackend {
     id: String,
     source: IcsSource,
     stale_after: Option<StdDuration>,
+    grace_period: Option<StdDuration>,
+    app_start_time: std::time::Instant,
+    /// Track whether grace period export has already been triggered (using
+    /// AtomicBool for thread-safe interior mutability).
+    grace_period_export_triggered: AtomicBool,
 }
 
 impl IcsBackend {
@@ -48,6 +54,9 @@ impl IcsBackend {
             id: id.into(),
             source,
             stale_after: None,
+            grace_period: None,
+            app_start_time: std::time::Instant::now(),
+            grace_period_export_triggered: AtomicBool::new(false),
         }
     }
 
@@ -67,6 +76,28 @@ impl IcsBackend {
     pub fn with_stale_after(mut self, stale_after: Option<StdDuration>) -> Self {
         self.stale_after = stale_after;
         self
+    }
+
+    /// Opt in to grace period: suppress staleness warnings for this many seconds
+    /// after initialization, allowing an external exporter time to run on boot
+    /// before checks activate. When the grace period expires, an immediate
+    /// export run is triggered.
+    pub fn with_grace_period(mut self, grace_period: Option<StdDuration>) -> Self {
+        self.grace_period = grace_period;
+        self
+    }
+
+    /// Set the app start time for grace period calculation. Should be called
+    /// by the poller to ensure all backends measure grace period from the same moment.
+    pub fn with_app_start_time(mut self, start_time: std::time::Instant) -> Self {
+        self.app_start_time = start_time;
+        self
+    }
+
+    /// Set the app start time for grace period calculation (mutable version).
+    /// Used for backends that are already constructed.
+    pub fn set_app_start_time(&mut self, start_time: std::time::Instant) {
+        self.app_start_time = start_time;
     }
 
     async fn load_text(&self) -> Result<String, BackendError> {
@@ -89,9 +120,18 @@ impl IcsBackend {
     }
 
     /// Check whether the `.ics` file is fresh enough. A no-op unless
-    /// `stale_after` is set and the source is a local file. Prefers the
-    /// exporter-written `<file>.status.json` sidecar (authoritative reason
-    /// for the last attempt) and falls back to the file's mtime.
+    /// `stale_after` is set and the source is a local file. 
+    ///
+    /// Grace period behavior:
+    /// - If `grace_period` is set and elapsed time < grace period:
+    ///   - Explicit exporter failure (sidecar ok:false) still raises error
+    ///   - Otherwise, suppress staleness check and return Ok (give exporter time to run)
+    /// - When grace period expires (elapsed >= grace period):
+    ///   - Trigger an immediate export run (once)
+    ///   - Then perform normal staleness checks
+    ///
+    /// Prefers the exporter-written `<file>.status.json` sidecar (authoritative
+    /// reason for the last attempt) and falls back to the file's mtime.
     fn check_staleness(&self) -> Result<(), BackendError> {
         let Some(stale_after) = self.stale_after else {
             return Ok(());
@@ -100,6 +140,33 @@ impl IcsBackend {
             return Ok(());
         };
 
+        let elapsed = self.app_start_time.elapsed();
+
+        // Check if we're still within the grace period
+        if let Some(grace) = self.grace_period {
+            if elapsed < grace {
+                // Grace period active: only raise error if sidecar explicitly shows failure
+                if let Some(status) = read_export_status(path) {
+                    if !status.ok {
+                        return Err(BackendError::Stale(
+                            status
+                                .message
+                                .unwrap_or_else(|| "last export attempt failed".to_string()),
+                        ));
+                    }
+                }
+                // No explicit failure: suppress staleness check during grace period
+                return Ok(());
+            } else {
+                // Grace period just expired: trigger export if not already done
+                if !self.grace_period_export_triggered.swap(true, Ordering::SeqCst) {
+                    // We were the first to set it to true, so trigger export
+                    trigger_export(&self.id);
+                }
+            }
+        }
+
+        // Normal staleness check (outside grace period or no grace period configured)
         if let Some(status) = read_export_status(path) {
             if !status.ok {
                 return Err(BackendError::Stale(
@@ -134,6 +201,38 @@ impl IcsBackend {
             )));
         }
         Ok(())
+    }
+}
+
+/// Trigger an immediate export run via systemd (for owa-exporter).
+/// Logs the action; any errors are logged but not propagated.
+fn trigger_export(backend_id: &str) {
+    let service_name = "calendar-notifications-owa-export.service";
+    match std::process::Command::new("systemctl")
+        .args(&["--user", "start", service_name])
+        .output()
+    {
+        Ok(output) => {
+            if output.status.success() {
+                tracing::info!(
+                    "Grace period expired for backend '{}', triggered immediate export",
+                    backend_id
+                );
+            } else {
+                tracing::warn!(
+                    "Grace period expired for backend '{}', but systemctl start failed: {}",
+                    backend_id,
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+        }
+        Err(e) => {
+            tracing::warn!(
+                "Grace period expired for backend '{}', but could not trigger export: {}",
+                backend_id,
+                e
+            );
+        }
     }
 }
 
@@ -545,6 +644,73 @@ END:VCALENDAR\r
         let backend =
             IcsBackend::from_file("acct", &path).with_stale_after(Some(StdDuration::from_secs(2700)));
         assert!(matches!(backend.check_staleness(), Err(BackendError::Stale(_))));
+        cleanup(&path);
+    }
+
+    #[test]
+    fn grace_period_suppresses_staleness_check() {
+        let path = temp_ics_path("grace-suppress");
+        cleanup(&path);
+        std::fs::write(&path, SAMPLE).unwrap();
+        // Set file mtime to be old (would normally trigger staleness)
+        let old = std::time::SystemTime::now() - StdDuration::from_secs(3600);
+        std::fs::File::open(&path).unwrap().set_modified(old).unwrap();
+
+        // Create backend with grace period longer than our sleep duration
+        // app_start_time is now, so elapsed will be < grace_period
+        let backend = IcsBackend::from_file("acct", &path)
+            .with_stale_after(Some(StdDuration::from_secs(2700)))
+            .with_grace_period(Some(StdDuration::from_secs(60)));
+        // Should be OK because we're within grace period, even though mtime is old
+        assert!(backend.check_staleness().is_ok());
+        cleanup(&path);
+    }
+
+    #[test]
+    fn grace_period_active_explicit_failure_still_errors() {
+        let path = temp_ics_path("grace-explicit-fail");
+        cleanup(&path);
+        std::fs::write(&path, SAMPLE).unwrap();
+        write_sidecar(
+            &path,
+            r#"{"ok":false,"timestamp":"2026-01-01T00:00:00Z","message":"auth failed"}"#,
+        );
+
+        let backend = IcsBackend::from_file("acct", &path)
+            .with_stale_after(Some(StdDuration::from_secs(2700)))
+            .with_grace_period(Some(StdDuration::from_secs(60)));
+        // Even within grace period, explicit export failure should error
+        match backend.check_staleness() {
+            Err(BackendError::Stale(msg)) => assert_eq!(msg, "auth failed"),
+            other => panic!("expected Stale error, got {other:?}"),
+        }
+        cleanup(&path);
+    }
+
+    #[test]
+    fn grace_period_export_triggered_once() {
+        let path = temp_ics_path("grace-trigger");
+        cleanup(&path);
+        std::fs::write(&path, SAMPLE).unwrap();
+        // Set file mtime to be old
+        let old = std::time::SystemTime::now() - StdDuration::from_secs(3600);
+        std::fs::File::open(&path).unwrap().set_modified(old).unwrap();
+
+        // Create backend with expired grace period (0 secs, so already expired)
+        let backend = IcsBackend::from_file("acct", &path)
+            .with_stale_after(Some(StdDuration::from_secs(2700)))
+            .with_grace_period(Some(StdDuration::from_secs(0)))
+            .with_app_start_time(std::time::Instant::now() - StdDuration::from_secs(1));
+        // Grace period is expired, so check_staleness should have tried to trigger export
+        // The export won't actually run (systemctl won't be available in test), but
+        // the export_triggered flag should be set to prevent re-triggering
+        let result1 = backend.check_staleness();
+        let result2 = backend.check_staleness();
+        // Both calls should return Stale (export triggering doesn't suppress the error)
+        assert!(matches!(result1, Err(BackendError::Stale(_))));
+        assert!(matches!(result2, Err(BackendError::Stale(_))));
+        // Verify that export_triggered flag was set (it only tries once)
+        assert!(backend.grace_period_export_triggered.load(Ordering::Relaxed));
         cleanup(&path);
     }
 }

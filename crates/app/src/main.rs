@@ -179,7 +179,7 @@ fn main() {
 }
 
 /// Build the configured backends (worker-thread side).
-fn build_backends(cfg: &Config) -> Vec<Box<dyn CalendarBackend>> {
+fn build_backends(cfg: &Config, app_start_time: std::time::Instant) -> Vec<Box<dyn CalendarBackend>> {
     let mut backends: Vec<Box<dyn CalendarBackend>> = Vec::new();
     for b in &cfg.backends {
         match b.kind.as_str() {
@@ -188,15 +188,23 @@ fn build_backends(cfg: &Config) -> Vec<Box<dyn CalendarBackend>> {
                     .stale_after_secs
                     .filter(|&s| s > 0)
                     .map(StdDuration::from_secs);
+                let grace_period = b
+                    .staleness_grace_period_secs
+                    .filter(|&s| s > 0)
+                    .map(StdDuration::from_secs);
                 if let Some(url) = &b.url {
                     backends.push(Box::new(
                         IcsBackend::from_url(b.id.clone(), url.clone())
-                            .with_stale_after(stale_after),
+                            .with_stale_after(stale_after)
+                            .with_grace_period(grace_period)
+                            .with_app_start_time(app_start_time),
                     ));
                 } else if let Some(file) = &b.file {
                     backends.push(Box::new(
                         IcsBackend::from_file(b.id.clone(), file.clone())
-                            .with_stale_after(stale_after),
+                            .with_stale_after(stale_after)
+                            .with_grace_period(grace_period)
+                            .with_app_start_time(app_start_time),
                     ));
                 } else {
                     tracing::warn!("ics backend '{}' has neither `url` nor `file`", b.id);
@@ -422,7 +430,8 @@ fn spawn_poller(cfg: Config, events: EventSnapshot, issues: IssueSnapshot) {
             };
 
             rt.block_on(async move {
-                let backends = build_backends(&cfg);
+                let app_start_time = std::time::Instant::now();
+                let backends = build_backends(&cfg, app_start_time);
                 if backends.is_empty() {
                     tracing::warn!("no usable backends configured; poller idle");
                 }

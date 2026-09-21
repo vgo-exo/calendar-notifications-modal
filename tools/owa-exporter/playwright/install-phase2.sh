@@ -35,6 +35,14 @@ mkdir -p "$UNIT_DIR"
 sed "s|NODE_BIN_PLACEHOLDER|$NODE_BIN|" \
   "$HERE/calendar-notifications-owa-export.service" > "$UNIT_DIR/calendar-notifications-owa-export.service"
 cp -f "$HERE/calendar-notifications-owa-export.timer" "$UNIT_DIR/calendar-notifications-owa-export.timer"
+cp -f "$HERE/calendar-notifications-owa-export-alert.service" "$UNIT_DIR/calendar-notifications-owa-export-alert.service"
+
+if ! command -v notify-send >/dev/null 2>&1; then
+  echo "WARNING: 'notify-send' not found — the instant failure alert won't be able to" >&2
+  echo "         show a desktop notification. Install libnotify-bin (Debian/Ubuntu) or" >&2
+  echo "         libnotify (Fedora) to enable it. The daemon's own in-app warning still" >&2
+  echo "         works regardless." >&2
+fi
 
 systemctl --user daemon-reload
 systemctl --user enable --now calendar-notifications-owa-export.timer

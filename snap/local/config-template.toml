@@ -34,6 +34,9 @@ after_now = [5, 10, 15, 30]
 # type = "ics"
 # id = "personal"
 # file = "/home/you/.local/share/calendars/personal.ics"
+# Optional: opt in to staleness detection if a periodic exporter is supposed
+# to keep this file fresh (e.g. tools/owa-exporter); unset disables it.
+# stale_after_secs = 2700  # 45 min
 #
 # Microsoft 365 / Outlook (requires setup - see README):
 # [[backends]]

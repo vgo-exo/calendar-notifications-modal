@@ -1,0 +1,6 @@
+[Unit]
+Description=Instant desktop alert when the OWA calendar export fails
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/notify-send --urgency=critical --app-name="Calendar Notifications Modal" "OWA calendar export failed" "work.ics may be stale. Check: journalctl --user -u calendar-notifications-owa-export.service -e"

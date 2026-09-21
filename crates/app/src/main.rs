@@ -179,15 +179,33 @@ fn main() {
 }
 
 /// Build the configured backends (worker-thread side).
-fn build_backends(cfg: &Config) -> Vec<Box<dyn CalendarBackend>> {
+fn build_backends(cfg: &Config, app_start_time: std::time::Instant) -> Vec<Box<dyn CalendarBackend>> {
     let mut backends: Vec<Box<dyn CalendarBackend>> = Vec::new();
     for b in &cfg.backends {
         match b.kind.as_str() {
             "ics" => {
+                let stale_after = b
+                    .stale_after_secs
+                    .filter(|&s| s > 0)
+                    .map(StdDuration::from_secs);
+                let grace_period = b
+                    .staleness_grace_period_secs
+                    .filter(|&s| s > 0)
+                    .map(StdDuration::from_secs);
                 if let Some(url) = &b.url {
-                    backends.push(Box::new(IcsBackend::from_url(b.id.clone(), url.clone())));
+                    backends.push(Box::new(
+                        IcsBackend::from_url(b.id.clone(), url.clone())
+                            .with_stale_after(stale_after)
+                            .with_grace_period(grace_period)
+                            .with_app_start_time(app_start_time),
+                    ));
                 } else if let Some(file) = &b.file {
-                    backends.push(Box::new(IcsBackend::from_file(b.id.clone(), file.clone())));
+                    backends.push(Box::new(
+                        IcsBackend::from_file(b.id.clone(), file.clone())
+                            .with_stale_after(stale_after)
+                            .with_grace_period(grace_period)
+                            .with_app_start_time(app_start_time),
+                    ));
                 } else {
                     tracing::warn!("ics backend '{}' has neither `url` nor `file`", b.id);
                 }
@@ -412,7 +430,8 @@ fn spawn_poller(cfg: Config, events: EventSnapshot, issues: IssueSnapshot) {
             };
 
             rt.block_on(async move {
-                let backends = build_backends(&cfg);
+                let app_start_time = std::time::Instant::now();
+                let backends = build_backends(&cfg, app_start_time);
                 if backends.is_empty() {
                     tracing::warn!("no usable backends configured; poller idle");
                 }
@@ -421,6 +440,11 @@ fn spawn_poller(cfg: Config, events: EventSnapshot, issues: IssueSnapshot) {
                 // send a desktop notification on a *transition* (new failure,
                 // changed error, or recovery) rather than every poll cycle.
                 let mut last_error: std::collections::HashMap<String, String> =
+                    std::collections::HashMap::new();
+                // Tracks the last successfully-fetched events per backend id, so
+                // a failing/stale backend doesn't make its already-known events
+                // (and their reminders) disappear for the cycle.
+                let mut last_good: std::collections::HashMap<String, Vec<CalendarEvent>> =
                     std::collections::HashMap::new();
                 loop {
                     let now = Utc::now();
@@ -432,8 +456,9 @@ fn spawn_poller(cfg: Config, events: EventSnapshot, issues: IssueSnapshot) {
                     for backend in &backends {
                         let id = backend.id();
                         match backend.fetch_events(window_start, window_end).await {
-                            Ok(mut evs) => {
-                                all.append(&mut evs);
+                            Ok(evs) => {
+                                last_good.insert(id.to_string(), evs.clone());
+                                all.extend(evs);
                                 if let Some(prev) = last_error.remove(id) {
                                     tracing::info!("backend '{id}' recovered (was: {prev})");
                                     notify_backend(
@@ -457,6 +482,9 @@ fn spawn_poller(cfg: Config, events: EventSnapshot, issues: IssueSnapshot) {
                                     id: id.to_string(),
                                     message: msg,
                                 });
+                                if let Some(evs) = last_good.get(id) {
+                                    all.extend(evs.iter().cloned());
+                                }
                             }
                         }
                     }

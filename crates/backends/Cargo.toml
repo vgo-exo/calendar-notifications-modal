@@ -6,7 +6,7 @@ license.workspace = true
 
 [features]
 default = ["ics", "msgraph", "google"]
-ics = []
+ics = ["dep:serde", "dep:serde_json"]
 msgraph = ["dep:serde", "dep:serde_json", "dep:directories", "dep:tokio"]
 google = ["dep:serde", "dep:serde_json", "dep:directories", "dep:tokio"]
 

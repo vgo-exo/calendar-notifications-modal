@@ -23,6 +23,17 @@ after_now = [5, 10, 15, 30]
 type = "ics"
 id = "work"
 url = "https://example.com/calendar.ics"
+# Optional: if this file is refreshed by a periodic exporter (e.g.
+# tools/owa-exporter), opt in to staleness detection so a silent export
+# failure (e.g. an expired login session) surfaces as a warning instead of
+# quietly serving old data. Recommended: ~3x the exporter's own interval.
+# stale_after_secs = 2700  # 45 min; owa-exporter's timer runs every 15 min
+# Optional: grace period to suppress staleness warnings on boot while the
+# exporter has time to run. During the grace period, staleness checks are
+# suppressed (except if the exporter explicitly signals failure). When the
+# grace period expires, an immediate export run is triggered. Recommended: at
+# least the exporter's OnBootSec (e.g. 2 min) plus a system variability buffer.
+# staleness_grace_period_secs = 180  # 3 min (covers 2 min OnBootSec + 1 min buffer)
 
 [[backends]]
 type = "ics"

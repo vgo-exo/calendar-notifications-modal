@@ -68,6 +68,9 @@ Then add the backend to `~/.config/calendar-notifications-modal/config.toml`:
 type = "ics"
 id = "work"
 file = "/home/<you>/.local/share/calendar-notifications-modal/work.ics"
+# Surface a stuck export (e.g. an expired login session) as a warning instead
+# of silently serving a stale file — see "Failure detection" below.
+stale_after_secs = 2700  # 45 min; the timer below runs every 15 min
 ```
 
 Optionally force an immediate run:
@@ -104,6 +107,23 @@ need tuning for this tenant's response format — capture a sample response body
 (DevTools Network tab → the `service.svc`/`GetCalendarView` request → Response)
 and adjust `harvest.js`.
 
+## Failure detection
+
+A failed run (not logged in, expired session, or an unexpected error) leaves
+`work.ics` untouched — there'd otherwise be no error at all, just silently
+stale data. Two independent layers surface it:
+
+- **`work.ics.status.json`**: `export.js` writes this sidecar on *every* run
+  (`{ ok, timestamp, message }`), recording exactly what happened last. If
+  `stale_after_secs` is set on the `work` backend, the daemon reads this
+  sidecar and shows the warning banner / desktop notification with the exact
+  reason (e.g. "session expired — run: npm run login") instead of guessing
+  from the file's mtime.
+- **Instant systemd alert**: `calendar-notifications-owa-export.service` has
+  `OnFailure=calendar-notifications-owa-export-alert.service`, which fires a
+  `notify-send` popup the moment a run exits non-zero — independent of the
+  daemon, so it still works even if the daemon isn't running.
+
 ## Limitations
 
 - Chrome/Playwright must run interactively once (`npm run login`) whenever the
@@ -121,3 +141,4 @@ and adjust `harvest.js`.
 | `playwright/export.js` | Headless export run, writes `.ics` directly |
 | `playwright/install-phase2.sh` | npm install + systemd timer setup |
 | `playwright/calendar-notifications-owa-export.service` / `.timer` | systemd **user** oneshot + timer |
+| `playwright/calendar-notifications-owa-export-alert.service` | Instant `notify-send` alert on export failure (`OnFailure=`) |

@@ -290,6 +290,20 @@ async function main() {
   }
 
   // Prune to horizon + drop stale past events, mirroring the userscript.
+  // sawAnyJson === 0 means the page never fired any calendar-shaped network
+  // traffic at all — a soft auth failure (session borderline-expired, no hard
+  // login redirect) rather than a genuinely empty calendar. Treat it as a
+  // failure and leave the previously-captured .ics untouched instead of
+  // overwriting real events with an empty calendar.
+  if (sawAnyJson === 0) {
+    console.error(
+      'OWA export: saw 0 JSON response(s) — no calendar data was fetched at all ' +
+      '(likely a borderline-expired session). Leaving existing work.ics untouched.'
+    );
+    writeStatus(false, 'no calendar data captured — session likely stale, run: npm run login');
+    process.exit(4);
+  }
+
   const now = Date.now();
   const maxFuture = now + HORIZON_DAYS * 86400000;
   const keepPastMs = 60 * 60 * 1000;
@@ -311,8 +325,9 @@ async function main() {
   writeStatus(true, `captured ${events.size} event(s)`);
   if (events.size === 0) {
     console.warn(
-      'WARNING: 0 events captured. Set OWA_PW_HEADLESS=0 and re-run to watch the ' +
-      'browser interactively, or check that the profile is signed in (npm run login).'
+      'WARNING: JSON responses were seen but 0 events were harvested from them. ' +
+      'Set OWA_PW_HEADLESS=0 and re-run to watch the browser interactively, or ' +
+      'capture a sample response with OWA_PW_DEBUG_DUMP to tune harvest.js.'
     );
   }
 }

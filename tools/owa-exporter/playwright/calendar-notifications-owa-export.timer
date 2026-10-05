@@ -2,9 +2,16 @@
 Description=Run OWA calendar export every 15 minutes
 
 [Timer]
+# OnCalendar (wall-clock) is used instead of OnUnitActiveSec (monotonic):
+# OnUnitActiveSec-only timers have been observed to get stuck with their
+# next elapse time computed as "infinity" after certain suspend/logout
+# sequences, silently stopping all future runs until the timer unit is
+# manually stopped+started. OnCalendar is realtime-clock based and doesn't
+# exhibit this failure mode.
+OnCalendar=*:0/15
 OnBootSec=2min
-OnUnitActiveSec=15min
 Persistent=true
+AccuracySec=30s
 
 [Install]
 WantedBy=timers.target
